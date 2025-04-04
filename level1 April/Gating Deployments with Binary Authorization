@@ -373,4 +373,3 @@ kubectl apply -f deploy.yaml
 
 
 
-No attestations found that were valid and signed by a key trusted by the attestor
