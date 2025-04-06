@@ -1,0 +1,22 @@
+
+# Check authenticated accounts
+gcloud auth list
+
+# Fetch default compute zone
+export ZONE=$(gcloud compute project-info describe --format="value(commonInstanceMetadata.items[google-compute-default-zone])")
+
+# Create a new Compute Engine instance
+gcloud compute instances create techvine \
+  --project=$DEVSHELL_PROJECT_ID \
+  --zone=$ZONE \
+  --machine-type=e2-medium \
+  --create-disk=auto-delete=yes,boot=yes,device-name=techvine,image=projects/windows-cloud/global/images/windows-server-2022-dc-v20230913,mode=rw,size=50,type=projects/$DEVSHELL_PROJECT_ID/zones/$ZONE/diskTypes/pd-balanced
+
+# Wait for instance initialization
+sleep 30
+
+# Fetch serial port output
+gcloud compute instances get-serial-port-output arcadecrew --zone=$ZONE
+
+# Reset Windows password for the 'admin' user
+gcloud compute reset-windows-password arcadecrew --zone=$ZONE --user admin --quiet
