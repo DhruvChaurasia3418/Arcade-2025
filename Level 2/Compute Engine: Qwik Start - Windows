@@ -1,3 +1,4 @@
+#!/bin/bash
 
 # Check authenticated accounts
 gcloud auth list
@@ -16,7 +17,7 @@ gcloud compute instances create techvine \
 sleep 30
 
 # Fetch serial port output
-gcloud compute instances get-serial-port-output arcadecrew --zone=$ZONE
+gcloud compute instances get-serial-port-output techvine --zone=$ZONE
 
 # Reset Windows password for the 'admin' user
-gcloud compute reset-windows-password arcadecrew --zone=$ZONE --user admin --quiet
+gcloud compute reset-windows-password techvine --zone=$ZONE --user admin --quiet
