@@ -112,9 +112,4 @@ echo "Scripts copied successfully!"
 echo "Executing script on VM..."
 gcloud compute ssh $INSTANCE_NAME --project=$DEVSHELL_PROJECT_ID --zone=$ZONE --quiet --command="bash /tmp/prepare_disk.sh"
 
-echo
-echo "======================================================="
-echo "              LAB COMPLETED SUCCESSFULLY!              "
-echo "======================================================="
-echo
-echo "Subscribe my Channel (Arcade Crew): https://www.youtube.com/@Arcade61432"
+
