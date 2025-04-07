@@ -1,14 +1,12 @@
+Task 1,2,3,4,5
 
 
-# Setup environment variables
+# Set environment variables
+export REGION= # Change this to your preferred region
+
 export PROJECT_ID=$(gcloud config get-value project)
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
-export ZONE=$(gcloud config get-value compute/zone)
-export REGION=$(gcloud config get-value compute/region)
-if [[ -z "$ZONE" ]]; then read -p "Enter the zone: " ZONE; fi
-if [[ -z "$REGION" ]]; then REGION=$(echo $ZONE | awk -F'-' '{print $1"-"$2}'); fi
-export ZONE
-export REGION
+
 
 # Enable required services
 gcloud services enable \
@@ -27,15 +25,15 @@ gcloud artifacts repositories create artifact-scanning-repo \
   --location=$REGION \
   --description="Docker repository"
 
-# Configure Docker auth
-gcloud auth configure-docker ${REGION}-docker.pkg.dev
+# Configure Docker authentication
+gcloud auth configure-docker $REGION-docker.pkg.dev
 
-# Prepare app directory
-mkdir -p vuln-scan && cd vuln-scan
+# Create and navigate to work directory
+mkdir vuln-scan && cd vuln-scan
 
 # Create Dockerfile
-cat > Dockerfile << EOF
-FROM python:3.8-alpine  
+cat > ./Dockerfile << EOF
+FROM python:3.8-alpine
 WORKDIR /app
 COPY . ./
 RUN pip3 install Flask==2.1.0
@@ -44,24 +42,28 @@ RUN pip3 install Werkzeug==2.2.2
 CMD exec gunicorn --bind :\$PORT --workers 1 --threads 8 main:app
 EOF
 
-# Create app
-cat > main.py << EOF
+# Create main.py file
+cat > ./main.py << EOF
 import os
 from flask import Flask
+
 app = Flask(__name__)
+
 @app.route("/")
 def hello_world():
-    name = os.environ.get("NAME", "Worlds")
+    name = os.environ.get("NAME", "World")
     return "Hello {}!".format(name)
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 EOF
 
-# Build and push Docker image
-gcloud builds submit . -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
+# Build and push image to Artifact Registry
+gcloud builds submit . -t $REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
 
-# Create vulnerability note
-cat > vulnz_note.json << EOM
+
+# Create an attestor note
+cat > ./vulnz_note.json << EOM
 {
   "attestation": {
     "hint": {
@@ -71,22 +73,25 @@ cat > vulnz_note.json << EOM
 }
 EOM
 
+# Store the note
 NOTE_ID=vulnz_note
-curl -X POST \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-    --data-binary @vulnz_note.json \
-    "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/?noteId=${NOTE_ID}"
+curl -vvv -X POST \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  --data-binary @./vulnz_note.json \
+  "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/?noteId=${NOTE_ID}"
 
-# Create attestor
+# Create an attestor
 ATTESTOR_ID=vulnz-attestor
 gcloud container binauthz attestors create $ATTESTOR_ID \
-    --attestation-authority-note=$NOTE_ID \
-    --attestation-authority-note-project=${PROJECT_ID}
+  --attestation-authority-note=$NOTE_ID \
+  --attestation-authority-note-project=${PROJECT_ID}
 
-# Set IAM policy for attestor
+# Assign IAM permissions to Binary Authorization service account
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
 BINAUTHZ_SA_EMAIL="service-${PROJECT_NUMBER}@gcp-sa-binaryauthorization.iam.gserviceaccount.com"
-cat > iam_request.json << EOM
+
+cat > ./iam_request.json << EOM
 {
   "resource": "projects/${PROJECT_ID}/notes/${NOTE_ID}",
   "policy": {
@@ -102,100 +107,266 @@ cat > iam_request.json << EOM
 }
 EOM
 
+# Apply IAM policy
 curl -X POST \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-    --data-binary @iam_request.json \
-    "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/${NOTE_ID}:setIamPolicy"
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  --data-binary @./iam_request.json \
+  "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/${NOTE_ID}:setIamPolicy"
 
-# KMS Setup
+
+# Define environment variables for KMS
 KEY_LOCATION=global
 KEYRING=binauthz-keys
 KEY_NAME=codelab-key
 KEY_VERSION=1
 
+# Create a keyring
 gcloud kms keyrings create "${KEYRING}" --location="${KEY_LOCATION}"
+
+# Create an asymmetric signing key pair
 gcloud kms keys create "${KEY_NAME}" \
-    --keyring="${KEYRING}" --location="${KEY_LOCATION}" \
-    --purpose asymmetric-signing \
-    --default-algorithm="ec-sign-p256-sha256"
+  --keyring="${KEYRING}" --location="${KEY_LOCATION}" \
+  --purpose asymmetric-signing \
+  --default-algorithm="ec-sign-p256-sha256"
 
+# Associate the key with the attestor
 gcloud beta container binauthz attestors public-keys add \
-    --attestor="${ATTESTOR_ID}" \
-    --keyversion-project="${PROJECT_ID}" \
-    --keyversion-location="${KEY_LOCATION}" \
-    --keyversion-keyring="${KEYRING}" \
-    --keyversion-key="${KEY_NAME}" \
-    --keyversion="${KEY_VERSION}"
+  --attestor="${ATTESTOR_ID}" \
+  --keyversion-project="${PROJECT_ID}" \
+  --keyversion-location="${KEY_LOCATION}" \
+  --keyversion-keyring="${KEYRING}" \
+  --keyversion-key="${KEY_NAME}" \
+  --keyversion="${KEY_VERSION}"
 
-# Create signed attestation
-CONTAINER_PATH=${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
-DIGEST=$(gcloud container images describe ${CONTAINER_PATH}:latest --format='get(image_summary.digest)')
 
+# Set container path
+CONTAINER_PATH=$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
+
+# Get image digest
+DIGEST=$(gcloud container images describe ${CONTAINER_PATH}:latest \
+  --format='get(image_summary.digest)')
+
+# Create an attestation
 gcloud beta container binauthz attestations sign-and-create \
-    --artifact-url="${CONTAINER_PATH}@${DIGEST}" \
-    --attestor="${ATTESTOR_ID}" \
-    --attestor-project="${PROJECT_ID}" \
-    --keyversion-project="${PROJECT_ID}" \
-    --keyversion-location="${KEY_LOCATION}" \
-    --keyversion-keyring="${KEYRING}" \
-    --keyversion-key="${KEY_NAME}" \
-    --keyversion="${KEY_VERSION}"
+  --artifact-url="${CONTAINER_PATH}@${DIGEST}" \
+  --attestor="${ATTESTOR_ID}" \
+  --attestor-project="${PROJECT_ID}" \
+  --keyversion-project="${PROJECT_ID}" \
+  --keyversion-location="${KEY_LOCATION}" \
+  --keyversion-keyring="${KEYRING}" \
+  --keyversion-key="${KEY_NAME}" \
+  --keyversion="${KEY_VERSION}"
 
-# Create GKE Cluster
+# Create GKE cluster with Binary Authorization enabled
 gcloud beta container clusters create binauthz \
-    --zone $ZONE \
-    --binauthz-evaluation-mode=PROJECT_SINGLETON_POLICY_ENFORCE
+  --zone "$REGION-a" \
+  --binauthz-evaluation-mode=PROJECT_SINGLETON_POLICY_ENFORCE
 
-# IAM bindings
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-    --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-    --role="roles/container.developer"
-
+# Allow Cloud Build to deploy to this cluster
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/binaryauthorization.attestorsViewer"
+  --role="roles/container.developer"
 
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/cloudkms.signerVerifier"
+# Deploy a sample image
+kubectl run hello-server --image gcr.io/google-samples/hello-app:1.0 --port 8080
 
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/cloudkms.signerVerifier"
+# Verify deployment
+kubectl get pods
 
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/containeranalysis.notes.attacher"
+# Delete deployment
+kubectl delete pod hello-server
 
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
+# Export existing policy
+gcloud container binauthz policy export > policy.yaml
 
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/ondemandscanning.admin"
+# Modify policy.yaml to set `evaluationMode: ALWAYS_DENY`
+sed -i 's/evaluationMode: ALWAYS_ALLOW/evaluationMode: ALWAYS_DENY/' policy.yaml
 
-# Clone and build attestation builder
+# Apply updated policy
+gcloud container binauthz policy import policy.yaml
+
+
+----------------------------------------------------------------------------------------------------------------------------------------
+go to editor & paste
+
+globalPolicyEvaluationMode: ENABLE
+defaultAdmissionRule:
+  evaluationMode: ALWAYS_ALLOW
+  enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+name: projects/PROJECT_ID/policy
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+
+Task 6,7,8
+
 git clone https://github.com/GoogleCloudPlatform/cloud-builders-community.git
 cd cloud-builders-community/binauthz-attestation
 gcloud builds submit . --config cloudbuild.yaml
 cd ../..
 rm -rf cloud-builders-community
 
-# Create cloudbuild.yaml for CI/CD
-cat > cloudbuild.yaml << EOF
+
+cat > ./cloudbuild.yaml << EOF
 steps:
+
+# Build
 - id: "build"
   name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', '${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image', '.']
+  args: ['build', '-t', '$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image', '.']
   waitFor: ['-']
 
+# Retag
 - id: "retag"
   name: 'gcr.io/cloud-builders/docker'
-  args: ['tag',  '${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image', '${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good']
+  args: ['tag',  '$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image', '$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good']
 
+# Pushing to Artifact Registry
 - id: "push"
   name: 'gcr.io/cloud-builders/docker'
-  args: ['push',  '${REGION}-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good']
+  args: ['push',  '$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good']
+
+# Sign the Image (if severity check passes)
+- id: 'create-attestation'
+  name: 'gcr.io/${PROJECT_ID}/binauthz-attestation:latest'
+  args:
+    - '--artifact-url'
+    - '$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good'
+    - '--attestor'
+    - 'projects/${PROJECT_ID}/attestors/$ATTESTOR_ID'
+    - '--keyversion'
+    - 'projects/${PROJECT_ID}/locations/$KEY_LOCATION/keyRings/$KEYRING/cryptoKeys/$KEY_NAME/cryptoKeyVersions/$KEY_VERSION'
+
+images:
+  - $REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:good
 EOF
+
+
+
+gcloud builds submit
+
+
+
+COMPUTE_ZONE=$REGION
+
+cat > binauth_policy.yaml << EOM
+defaultAdmissionRule:
+  enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+  evaluationMode: REQUIRE_ATTESTATION
+  requireAttestationsBy:
+  - projects/${PROJECT_ID}/attestors/vulnz-attestor
+globalPolicyEvaluationMode: ENABLE
+clusterAdmissionRules:
+  ${COMPUTE_ZONE}.binauthz:
+    evaluationMode: REQUIRE_ATTESTATION
+    enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+    requireAttestationsBy:
+    - projects/${PROJECT_ID}/attestors/vulnz-attestor
+EOM
+
+
+gcloud beta container binauthz policy import binauth_policy.yaml
+
+
+CONTAINER_PATH=$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
+DIGEST=$(gcloud container images describe ${CONTAINER_PATH}:good \
+    --format='get(image_summary.digest)')
+
+
+cat > deploy.yaml << EOM
+apiVersion: v1
+kind: Service
+metadata:
+  name: deb-httpd
+spec:
+  selector:
+    app: deb-httpd
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deb-httpd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deb-httpd
+  template:
+    metadata:
+      labels:
+        app: deb-httpd
+    spec:
+      containers:
+      - name: deb-httpd
+        image: ${CONTAINER_PATH}@${DIGEST}
+        ports:
+        - containerPort: 8080
+        env:
+          - name: PORT
+            value: "8080"
+EOM
+
+
+
+kubectl apply -f deploy.yaml
+
+
+
+docker build -t $REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:bad .
+
+
+docker push $REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image:bad
+
+
+CONTAINER_PATH=$REGION-docker.pkg.dev/${PROJECT_ID}/artifact-scanning-repo/sample-image
+DIGEST=$(gcloud container images describe ${CONTAINER_PATH}:bad \
+    --format='get(image_summary.digest)')
+
+
+
+cat > deploy.yaml << EOM
+apiVersion: v1
+kind: Service
+metadata:
+  name: deb-httpd
+spec:
+  selector:
+    app: deb-httpd
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deb-httpd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deb-httpd
+  template:
+    metadata:
+      labels:
+        app: deb-httpd
+    spec:
+      containers:
+      - name: deb-httpd
+        image: ${CONTAINER_PATH}@${DIGEST}
+        ports:
+        - containerPort: 8080
+        env:
+          - name: PORT
+            value: "8080"
+EOM
+
+
+
+kubectl apply -f deploy.yaml
