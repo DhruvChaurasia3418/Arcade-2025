@@ -26,7 +26,7 @@ curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
      --data-binary @bucket2.json \
      "https://storage.googleapis.com/storage/v1/b?project=$DEVSHELL_PROJECT_ID"
 
-curl -LO https://raw.githubusercontent.com/ArcadeCrew/Google-Cloud-Labs/refs/heads/main/Use%20APIs%20to%20Work%20with%20Cloud%20Storage%20Challenge%20Lab/world.jpeg
+curl -LO https://raw.githubusercontent.com/DhruvChaurasia3418/Arcade-2025/bd0bc759fc2f848574bd0733d446851509f5074f/Base%20Camp/Dhruv.jpeg
 
 curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
      -H "Content-Type: image/jpeg" \
