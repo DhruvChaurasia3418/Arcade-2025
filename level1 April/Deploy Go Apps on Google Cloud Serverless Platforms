@@ -1,17 +1,15 @@
-gcloud auth list
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Run two commands from lab to export project id & region
+export REGION=
 
------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-# Clone the repo
+
+export PROJECT_ID=$(gcloud info --format="value(config.project)")
+
 git clone https://github.com/GoogleCloudPlatform/DIY-Tools.git
 
-# Firestore import
 gcloud firestore import gs://$PROJECT_ID-firestore/prd-back
 
-# Get project number and setup service account permissions
 PROJECT_NUMBER=$(gcloud projects list --filter="PROJECT_ID=$PROJECT_ID" --format="value(PROJECT_NUMBER)")
 SERVICE_ACCOUNT_EMAIL="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
 
@@ -19,55 +17,75 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member "serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
     --role "roles/artifactregistry.reader"
 
-# Build and deploy Cloud Run
 cd ~/DIY-Tools/gcp-data-drive
 
 gcloud builds submit --config cloudbuild_run.yaml \
   --project $PROJECT_ID --no-source \
   --substitutions=_GIT_SOURCE_BRANCH="master",_GIT_SOURCE_URL="https://github.com/GoogleCloudPlatform/DIY-Tools"
 
-# Allow public access to Cloud Run service
 gcloud beta run services add-iam-policy-binding --region=$REGION --member=allUsers --role=roles/run.invoker gcp-data-drive
 
-# Test Cloud Run URLs
 export CLOUD_RUN_SERVICE_URL=$(gcloud run services --platform managed describe gcp-data-drive --region $REGION --format="value(status.url)")
 
 curl $CLOUD_RUN_SERVICE_URL/fs/$PROJECT_ID/symbols/product/symbol | jq .
+
 curl $CLOUD_RUN_SERVICE_URL/bq/$PROJECT_ID/publicviews/ca_zip_codes | jq .
 
-# Wait for service to warm up
 sleep 60
 
-# Deploy Cloud Function using cloudbuild_gcf.yaml
-gcloud builds submit --config cloudbuild_gcf.yaml --project $PROJECT_ID --no-source \
-  --substitutions=_GIT_SOURCE_BRANCH="master",_GIT_SOURCE_URL="https://github.com/GoogleCloudPlatform/DIY-Tools"
+cat > cloudbuild_gcf.yaml <<'EOF_END'
+steps:
+- name: 'gcr.io/cloud-builders/git'
+  args: ['clone','--single-branch','--branch','${_GIT_SOURCE_BRANCH}','${_GIT_SOURCE_URL}']
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: ['functions','deploy','gcp-data-drive','--trigger-http','--runtime','go121','--entry-point','GetJSONData', '--project','$PROJECT_ID','--memory','2048']
+  dir: 'DIY-Tools/gcp-data-drive'
+EOF_END
+
+gcloud builds submit --config cloudbuild_gcf.yaml --project $PROJECT_ID --no-source --substitutions=_GIT_SOURCE_BRANCH="master",_GIT_SOURCE_URL="https://github.com/GoogleCloudPlatform/DIY-Tools"
 
 gcloud alpha functions add-iam-policy-binding gcp-data-drive --member=allUsers --role=roles/cloudfunctions.invoker
 
 export CF_TRIGGER_URL=$(gcloud functions describe gcp-data-drive --format="value(httpsTrigger.url)")
 
 curl $CF_TRIGGER_URL/fs/$PROJECT_ID/symbols/product/symbol | jq .
+
 curl $CF_TRIGGER_URL/bq/$PROJECT_ID/publicviews/ca_zip_codes
 
-# Deploy to App Engine using cloudbuild_appengine.yaml
-gcloud builds submit --config cloudbuild_appengine.yaml \
+cat > cloudbuild_appengine.yaml <<'EOF_END'
+steps:
+- name: 'gcr.io/cloud-builders/git'
+  args: ['clone','--single-branch','--branch','${_GIT_SOURCE_BRANCH}','${_GIT_SOURCE_URL}']
+- name: 'ubuntu'
+  args: ['sed', '-i', 's/runtime: go113/runtime: go121/', 'app.yaml']
+  dir: 'DIY-Tools/gcp-data-drive/cmd/webserver'
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: ['app','deploy','app.yaml','--project','$PROJECT_ID']
+  dir: 'DIY-Tools/gcp-data-drive/cmd/webserver'
+EOF_END
+
+gcloud builds submit  --config cloudbuild_appengine.yaml \
    --project $PROJECT_ID --no-source \
    --substitutions=_GIT_SOURCE_BRANCH="master",_GIT_SOURCE_URL="https://github.com/GoogleCloudPlatform/DIY-Tools"
 
-# Test App Engine service
 export TARGET_URL=https://$(gcloud app describe --format="value(defaultHostname)")
 
 curl $TARGET_URL/fs/$PROJECT_ID/symbols/product/symbol | jq .
+
 curl $TARGET_URL/bq/$PROJECT_ID/publicviews/ca_zip_codes | jq .
 
-# Optional: Generate load
 cat > loadgen.sh <<EOF
 #!/bin/bash
-for ((i=1;i<=1020;i++));
+for ((i=1;i<=1000;i++));
 do
    curl $TARGET_URL/bq/$PROJECT_ID/publicviews/ca_zip_codes > /dev/null &
 done
 EOF
 
+gcloud builds submit --config cloudbuild_gcf.yaml --project $PROJECT_ID --no-source --substitutions=_GIT_SOURCE_BRANCH="master",_GIT_SOURCE_URL="https://github.com/GoogleCloudPlatform/DIY-Tools"
+
 chmod +x loadgen.sh
 ./loadgen.sh
+
+# Channel plug (updated)
+echo "Subscribe my Channel (Techvine): https://www.youtube.com/@TechvineYT"
