@@ -25,7 +25,8 @@ curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
      --data-binary @bucket2.json \
      "https://storage.googleapis.com/storage/v1/b?project=$DEVSHELL_PROJECT_ID"
 
-curl -LO https://raw.githubusercontent.com/ArcadeCrew/Google-Cloud-Labs/refs/heads/main/Use%20APIs%20to%20Work%20with%20Cloud%20Storage%20Challenge%20Lab/world.jpeg
+curl -LO https://raw.githubusercontent.com/DhruvChaurasia3418/Arcade-2025/e99aaaf0bdc5c6aa741afc540c02a74dbd4cd836/Base%20Camp/amN7kZDhflOmMUaM3tiFSjyw5yfXIqOxtrpslYJS2Kg%3D.jpg
+
 
 curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
      -H "Content-Type: image/jpeg" \
@@ -49,7 +50,7 @@ curl -X POST --data-binary @public_access.json \
      -H "Content-Type: application/json" \
      "https://storage.googleapis.com/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1/o/world.jpeg/acl"
 
-read -p "Checked the progress till TASK 4? (y/n) " -n 1 -r
+read -p "checked progress upto task 4? Y/N " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]
 then
