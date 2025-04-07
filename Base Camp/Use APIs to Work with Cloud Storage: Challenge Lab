@@ -1,67 +1,89 @@
-#!/bin/bash
+# Set project ID environment variable
+export PROJECT_ID=$(gcloud config get-value project)
 
-cat > bucket1.json <<EOF
-{  
-   "name": "$DEVSHELL_PROJECT_ID-bucket-1",
-   "location": "us",
-   "storageClass": "multi_regional"
-}
-EOF
+# Define bucket names based on project ID
+export BUCKET_1="${PROJECT_ID}-bucket-1"
+export BUCKET_2="${PROJECT_ID}-bucket-2"
 
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     -H "Content-Type: application/json" \
-     --data-binary @bucket1.json \
-     "https://storage.googleapis.com/storage/v1/b?project=$DEVSHELL_PROJECT_ID"
+# -------------------------------
+# Task 1: Create Buckets via REST API
+# -------------------------------
 
-cat > bucket2.json <<EOF
-{  
-   "name": "$DEVSHELL_PROJECT_ID-bucket-2",
-   "location": "us",
-   "storageClass": "multi_regional"
-}
-EOF
+# Create JSON for bucket 1
+echo "{
+  \"name\": \"$BUCKET_1\",
+  \"location\": \"US\",
+  \"storageClass\": \"MULTI_REGIONAL\"
+}" > bucket1.json
 
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     -H "Content-Type: application/json" \
-     --data-binary @bucket2.json \
-     "https://storage.googleapis.com/storage/v1/b?project=$DEVSHELL_PROJECT_ID"
+# Create bucket 1
+curl -X POST --data-binary @bucket1.json \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  "https://storage.googleapis.com/storage/v1/b?project=$PROJECT_ID"
 
-curl -LO https://raw.githubusercontent.com/DhruvChaurasia3418/Arcade-2025/bd0bc759fc2f848574bd0733d446851509f5074f/Base%20Camp/Dhruv.jpeg
+# Create JSON for bucket 2
+echo "{
+  \"name\": \"$BUCKET_2\",
+  \"location\": \"US\",
+  \"storageClass\": \"MULTI_REGIONAL\"
+}" > bucket2.json
 
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     -H "Content-Type: image/jpeg" \
-     --data-binary @world.jpeg \
-     "https://storage.googleapis.com/upload/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1/o?uploadType=media&name=world.jpeg"
+# Create bucket 2
+curl -X POST --data-binary @bucket2.json \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  "https://storage.googleapis.com/storage/v1/b?project=$PROJECT_ID"
 
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     -H "Content-Type: application/json" \
-     --data "{\"destination\": \"$DEVSHELL_PROJECT_ID-bucket-2\"}" \
-     "https://storage.googleapis.com/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1/o/world.jpeg/copyTo/b/$DEVSHELL_PROJECT_ID-bucket-2/o/world.jpeg"
+# -------------------------------
+# Task 2: Upload Image to Bucket 1
+# -------------------------------
 
-cat > public_access.json <<EOF
-{
+# Download the image
+wget "https://raw.githubusercontent.com/DhruvChaurasia3418/Arcade-2025/bd0bc759fc2f848574bd0733d446851509f5074f/Base%20Camp/Dhruv.jpeg" -O Dhruv.jpeg
+
+# Upload image using REST API
+curl -X POST --data-binary @Dhruv.jpeg \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: image/jpeg" \
+  "https://storage.googleapis.com/upload/storage/v1/b/$BUCKET_1/o?uploadType=media&name=Dhruv.jpeg"
+
+# -------------------------------
+# Task 3: Copy File to Bucket 2
+# -------------------------------
+
+curl -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  "https://storage.googleapis.com/storage/v1/b/$BUCKET_1/o/Dhruv.jpeg/copyTo/b/$BUCKET_2/o/Dhruv.jpeg"
+
+# -------------------------------
+# Task 4: Make File Public
+# -------------------------------
+
+# Create ACL JSON
+echo '{
   "entity": "allUsers",
   "role": "READER"
-}
-EOF
+}' > public.json
 
-curl -X POST --data-binary @public_access.json \
-     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     -H "Content-Type: application/json" \
-     "https://storage.googleapis.com/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1/o/world.jpeg/acl"
+# Make file publicly accessible
+curl -X POST --data-binary @public.json \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  "https://storage.googleapis.com/storage/v1/b/$BUCKET_1/o/Dhruv.jpeg/acl"
 
-read -p "Checked the progress till TASK 4? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]
-then
-    echo "Continuing..."
-else
-    echo "Please check the progress and run the script again."
-    exit 1
-fi
+# -------------------------------
+# Optional Task 5 (Cleanup) - Delete file and bucket 1
+# -------------------------------
 
-curl -X DELETE -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     "https://storage.googleapis.com/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1/o/world.jpeg"
+# Delete the image object in bucket 1
+curl -X DELETE \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://storage.googleapis.com/storage/v1/b/$BUCKET_1/o/Dhruv.jpeg"
 
-curl -X DELETE -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-     "https://storage.googleapis.com/storage/v1/b/$DEVSHELL_PROJECT_ID-bucket-1"
+# Delete bucket 1
+curl -X DELETE \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://storage.googleapis.com/storage/v1/b/$BUCKET_1"
+
