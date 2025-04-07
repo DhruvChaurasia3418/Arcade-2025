@@ -1,4 +1,4 @@
-#!/bin/bash
+
 
 # Setup environment variables
 export PROJECT_ID=$(gcloud config get-value project)
