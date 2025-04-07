@@ -87,5 +87,3 @@ gcloud builds submit --config cloudbuild_gcf.yaml --project $PROJECT_ID --no-sou
 chmod +x loadgen.sh
 ./loadgen.sh
 
-# Channel plug (updated)
-echo "Subscribe my Channel (Techvine): https://www.youtube.com/@TechvineYT"
