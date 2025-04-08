@@ -1,0 +1,77 @@
+
+export REGION=us-central1
+
+
+# Enable required services
+gcloud services enable cloudscheduler.googleapis.com
+gcloud services enable cloudfunctions.googleapis.com
+
+# Download the repo and move into it
+gcloud storage cp -r gs://spls/gsp649/* .
+cd gcf-automated-resource-cleanup/
+
+# Set project ID and working directory
+export PROJECT_ID=$(gcloud config list --format 'value(core.project)' 2>/dev/null)
+export WORKDIR=$(pwd)
+
+# Install Apache Bench for load testing
+sudo apt-get update
+sudo apt-get install apache2-utils -y
+
+# Navigate to the migrate-storage directory
+cd $WORKDIR/migrate-storage
+
+# Create serving bucket
+gcloud storage buckets create gs://${PROJECT_ID}-serving-bucket --location=$REGION
+
+# Make the bucket and file public
+gsutil acl ch -u allUsers:R gs://${PROJECT_ID}-serving-bucket
+
+# Copy test file to the serving bucket
+gcloud storage cp $WORKDIR/migrate-storage/testfile.txt gs://${PROJECT_ID}-serving-bucket
+gsutil acl ch -u allUsers:R gs://${PROJECT_ID}-serving-bucket/testfile.txt
+
+# Confirm file access
+curl http://storage.googleapis.com/${PROJECT_ID}-serving-bucket/testfile.txt
+
+# Create idle bucket
+gcloud storage buckets create gs://${PROJECT_ID}-idle-bucket --location=$REGION
+export IDLE_BUCKET_NAME=${PROJECT_ID}-idle-bucket
+
+# Generate load
+ab -n 10000 http://storage.googleapis.com/${PROJECT_ID}-serving-bucket/testfile.txt
+
+# Update Python function with project ID
+sed -i "s/<project-id>/$PROJECT_ID/" $WORKDIR/migrate-storage/main.py
+
+# Disable and re-enable Cloud Functions to avoid versioning errors
+gcloud services disable cloudfunctions.googleapis.com
+gcloud services enable cloudfunctions.googleapis.com
+
+# Get project number
+export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+
+# Add Artifact Registry reader role
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+
+# Deploy the Cloud Function (Gen 2)
+gcloud functions deploy migrate_storage \
+  --gen2 \
+  --trigger-http \
+  --runtime=python39 \
+  --region=$REGION \
+  --allow-unauthenticated
+
+# Get function URL
+export FUNCTION_URL=$(gcloud functions describe migrate_storage --format=json --region=$REGION | jq -r '.url')
+
+# Update incident.json with actual idle bucket name
+sed -i "s/\\\$IDLE_BUCKET_NAME/$IDLE_BUCKET_NAME/" $WORKDIR/migrate-storage/incident.json
+
+# Trigger the function with simulated alert
+envsubst < $WORKDIR/migrate-storage/incident.json | curl -X POST -H "Content-Type: application/json" $FUNCTION_URL -d @-
+
+# Confirm idle bucket is now NEARLINE
+gsutil defstorageclass get gs://$IDLE_BUCKET_NAME
