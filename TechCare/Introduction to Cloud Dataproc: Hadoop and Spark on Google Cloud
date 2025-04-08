@@ -1,5 +1,8 @@
-# Export variables after collecting input
-export CLUSTER_NAME
+
+export CLUSTER_NAME=
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
 
 gcloud auth list
 
